@@ -1,0 +1,124 @@
+---
+title: "Build and Deploy a Stroke Prediction Model Using R"
+author: "Muhammad Raza Khan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: styles.css
+runtime: shiny
+---
+
+```{r message=FALSE, warning=FALSE}
+options(repos = c(CRAN = "https://cran.r-project.org"))
+
+# Install and load packages
+# Install ROSE if not installed
+if (!"ROSE" %in% rownames(installed.packages())) install.packages("ROSE")
+library(ROSE)
+
+
+packages <- c("tidyverse", "caret", "randomForest", "e1071", "shiny")
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) install.packages(packages[!installed])
+
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(e1071)
+library(shiny)
+
+
+# Load and clean data
+stroke_data <- read.csv("healthcare-dataset-stroke-data.csv")
+stroke_data$bmi <- as.numeric(stroke_data$bmi)
+stroke_data$bmi[is.na(stroke_data$bmi)] <- mean(stroke_data$bmi, na.rm = TRUE)
+stroke_data <- na.omit(stroke_data)
+
+# Convert to factors
+stroke_data$gender <- as.factor(stroke_data$gender)
+stroke_data$ever_married <- as.factor(stroke_data$ever_married)
+stroke_data$work_type <- as.factor(stroke_data$work_type)
+stroke_data$Residence_type <- as.factor(stroke_data$Residence_type)
+stroke_data$smoking_status <- as.factor(stroke_data$smoking_status)
+stroke_data$stroke <- as.factor(stroke_data$stroke)
+
+# Data summary
+summary(stroke_data)
+str(stroke_data)
+
+# Train models
+set.seed(123)
+split <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data[split, ]
+
+# Create balanced training data
+balanced_data <- ROSE(stroke ~ ., data = train_data, seed = 123)$data
+table(balanced_data$stroke)
+
+test_data <- stroke_data[-split, ]
+
+log_model <- glm(stroke ~ ., data = train_data, family = "binomial")
+rf_model <- randomForest(stroke ~ ., data = train_data, ntree = 100)
+svm_model <- svm(stroke ~ ., data = train_data, kernel = "linear")
+
+# Evaluate models
+log_pred <- predict(log_model, test_data, type = "response")
+log_class <- as.factor(ifelse(log_pred > 0.5, 1, 0))
+confusionMatrix(log_class, test_data$stroke)
+
+rf_pred <- predict(rf_model, test_data)
+confusionMatrix(rf_pred, test_data$stroke)
+
+svm_pred <- predict(svm_model, test_data)
+confusionMatrix(svm_pred, test_data$stroke)
+log_model <- glm(stroke ~ ., data = balanced_data, family = "binomial")
+rf_model <- randomForest(stroke ~ ., data = balanced_data, ntree = 100)
+svm_model <- svm(stroke ~ ., data = balanced_data, kernel = "linear")
+
+```
+
+```{r, echo=FALSE}
+ui <- fluidPage(
+  titlePanel("🧠 Stroke Risk Prediction"),
+  sidebarLayout(
+    sidebarPanel(
+      numericInput("age", "Age:", 60),
+      selectInput("gender", "Gender:", choices = levels(stroke_data$gender)),
+      selectInput("hypertension", "Hypertension:", choices = c(0, 1)),
+      selectInput("heart_disease", "Heart Disease:", choices = c(0, 1)),
+      selectInput("ever_married", "Ever Married:", choices = levels(stroke_data$ever_married)),
+      selectInput("work_type", "Work Type:", choices = levels(stroke_data$work_type)),
+      selectInput("Residence_type", "Residence Type:", choices = levels(stroke_data$Residence_type)),
+      numericInput("avg_glucose_level", "Average Glucose Level:", 100),
+      numericInput("bmi", "BMI:", 25),
+      selectInput("smoking_status", "Smoking Status:", choices = levels(stroke_data$smoking_status))
+    ),
+    mainPanel(
+      h4("Prediction Result:"),
+      textOutput("prediction")
+    )
+  )
+)
+
+server <- function(input, output) {
+  output$prediction <- renderText({
+    input_data <- data.frame(
+      gender = input$gender,
+      age = input$age,
+      hypertension = as.numeric(input$hypertension),
+      heart_disease = as.numeric(input$heart_disease),
+      ever_married = input$ever_married,
+      work_type = input$work_type,
+      Residence_type = input$Residence_type,
+      avg_glucose_level = input$avg_glucose_level,
+      bmi = input$bmi,
+      smoking_status = input$smoking_status
+    )
+    
+    prediction <- predict(rf_model, input_data)
+    ifelse(prediction == 1, "⚠️ High Stroke Risk", "✅ Low Stroke Risk")
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
